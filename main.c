@@ -4,47 +4,70 @@
 #include "itr.h"
 #include "util.h"
 #include "keypad.h"
+#include "timer.h"
 
-bool keypad_pressed = 0;
-uint8_t keypad_value = 0;
-int timer = 0;
+bool start = false;
+
+int time_sec = 0;
+int time_sub_sec = 0;
+
+void update_display() {
+	GPIOC->ODR = time_sec & (time_sub_sec << 4);
+}
 
 int main() {
 	setup();
 	initKeypad();
-	
-	int count = 0;
-	uint8_t val = 0;
+	timerSetup();
 	
 	while (true) {
-		delay();
-		timer++;
-		// otherwise count and display
-		val = bcd_count(&count, 1);
-		
-		// if keypad was pressed display value
-		if (keypad_pressed) {
-			val = keypad_value;
-			// stop displaying keypad value after 5 seconds
-			if (timer > 3) {
-				keypad_pressed = false;
-			}
-		}
-		GPIOC->ODR = val;
+		// Nothing to do but wait.
 	}
 }
 
 /*
-* Read from keypad
+* Keypad ITR
 */
 void EXTI1_IRQHandler() {
 	__disable_irq();
 	
 	keypad_value = readKeypad();
-	keypad_pressed = true;
-	timer = 0;
-	GPIOC->ODR = keypad_value;
+	if (keypad_value == 0) {
+		start = !start;
+		if (start) {
+			// Start stopwatch counting
+			timerStart();
+		} else {
+			// Pause stopwatch counting
+			timerOff();
+		}
+	} else if (keypad_value == 1) {
+		// Reset to zero ONLY IF stop watch is NOT counting
+		if (!start) {
+			time_sec = 0;
+			time_sub_sec = 0;
+			update_display();
+		}
+	}
 	
 	clear_itr(EXTI1_IRQn);
 	__enable_irq();
+}
+
+void TIM6_IRQHandler() {
+	
+	int last_time_sub_sec = time_sub_sec;
+	bcd_count(&time_sub_sec, 1);
+	
+	/*
+	* If the tenth of a second clock goes 
+	* from 9 to 0 then increment single second clock
+	*/
+	if (last_time_sub_sec == 9 && time_sub_sec == 0) {
+		bcd_count(&time_sec, 1);
+	}
+	
+	// Display time
+	update_display();
+	clear_timer_flags();
 }
